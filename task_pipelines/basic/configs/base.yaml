@@ -1,0 +1,23 @@
+
+
+dataset:
+    name: "cifar10"
+    batch_size: 16
+    num_workers: 16 
+
+
+training:
+    seed: 42
+    deterministic: true
+    amp: "bf16"
+    check_out_dir: "./checkpoints"
+    lr: 0.001
+    weight_decay: 0.01
+    epochs: 100
+    num_workers: 16 
+
+
+model:
+    name: "resnet18"
+    pretrained: true
+    num_classes: 10

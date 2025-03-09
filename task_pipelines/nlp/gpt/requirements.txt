@@ -1,0 +1,5 @@
+spacy
+nltk
+pytorch_model_summary
+datasets
+
