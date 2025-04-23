@@ -23,6 +23,9 @@ export CACHE_FOL_PATH='/purestorage/project/tyk/0_Software/cache'
 export MY_WORKSPACE_PATH='/home/tyk/torch_pipeline/vision/img_classification'
 
 
+echo "Run started at:- "
+date
+
 srun --container-image $CONTAINER_IMAGE_PATH \
     --container-mounts /purestorage:/purestorage,$CACHE_FOL_PATH:/home/$USER/.cache \
     --no-container-mount-home \
@@ -30,7 +33,8 @@ srun --container-image $CONTAINER_IMAGE_PATH \
     --container-workdir $MY_WORKSPACE_PATH \
     python ddp_mnist.py \
 
-
+echo "Run completed at:- "
+date
 
 # 그냥 torchrun 쓰는 방법
 # torchrun --standalone --nnodes=1 --nproc_per_node=8 ddp_mnist.py

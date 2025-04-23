@@ -157,6 +157,7 @@ def get_args():
     parser.add_argument("--wandb_key", type=str)
     parser.add_argument("--log_dir", type=str, default="logs")
     parser.add_argument("--expname", type=str, default="exp")
+    parser.add_argument("--config", type=str, default='/home/tyk/torch_pipeline/task_pipelines/base_pipeline/configs/base.yaml')
     args = parser.parse_args()
     return args
 

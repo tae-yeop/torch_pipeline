@@ -1,8 +1,33 @@
 import torch
+from torchvision import transforms
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
-from torchvision import transforms
 import numbers
+
+class CenterCropMargin(object):
+    def __init__(self, fraction=0.95):
+        super().__init__()
+        self.fraction=fraction
+        
+    def __call__(self, img):
+        return transforms.functional.center_crop(img, min(img.size)*self.fraction)
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+class RandomHorizontalFlip(nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, data_dict):
+
+        if torch.rand(1) < self.p:
+            return {k: TF.hflip(v) for k, v in data_dict.items()}
+        return data_dict
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={})'.format(self.p)
 
 class RandomHorizontalFlipPair(transforms.RandomHorizontalFlip):
     def __call__(self, img_pair):
@@ -10,7 +35,7 @@ class RandomHorizontalFlipPair(transforms.RandomHorizontalFlip):
             return (TF.hflip(img_pair[0]), TF.hflip(img_pair[1]))
         return img_pair
 
-class Resize(torch.nn.Module):
+class ResizePair(torch.nn.Module):
     def __init__(self, size, interpolation=InterpolationMode.BILINEAR, max_size=None, antialias=None):
         super().__init__()
         self.size = size
@@ -25,6 +50,26 @@ class Resize(torch.nn.Module):
         interpolate_str = self.interpolation.value
         return self.__class__.__name__ + '(size={0}, interpolation={1}, max_size={2}, antialias={3})'.format(
             self.size, interpolate_str, self.max_size, self.antialias)
+
+
+
+class Resize(torch.nn.Module):
+    def __init__(self, size, interpolation=InterpolationMode.BILINEAR, max_size=None, antialias=None):
+        super().__init__()
+        self.size = size
+        self.max_size = max_size
+        self.interpolation = interpolation
+        self.antialias = antialias
+
+    def forward(self, data_dict):
+        return {k: TF.resize(v, self.size, self.interpolation, self.max_size, self.antialias) for k, v in data_dict.items()}
+
+    def __repr__(self):
+        interpolate_str = self.interpolation.value
+        return self.__class__.__name__ + '(size={0}, interpolation={1}, max_size={2}, antialias={3})'.format(
+            self.size, interpolate_str, self.max_size, self.antialias)
+
+
 
 def _setup_size(size, error_msg):
     if isinstance(size, numbers.Number):
@@ -83,13 +128,21 @@ class Normalize(torch.nn.Module):
         return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
 
-class ToTensor:
+class ToTensorPair:
     def __call__(self, img_pair):
         return tuple(TF.to_tensor(img) for img in img_pair)
 
     def __repr__(self):
         return self.__class__.__name__ + '()'
 
+
+class ToTensor:
+    def __call__(self, data_dict):
+        return {k: TF.to_tensor(v) for k, v in data_dict.items()}
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
+        
 
 def get_transform(trans_type, train_img_size=512):
     if trans_type == 'UHDM_train':
@@ -101,5 +154,20 @@ def get_transform(trans_type, train_img_size=512):
             # Normalize(0.5, 0.5)
         ])
     else:
-        ...
+        pass
     return transform
+
+
+
+from torchvision.transforms import (RandomCrop, CenterCrop, RandomHorizontalFlip, Resize, 
+                                    ToTensor, Normalize, Compose)
+
+
+basic_img_transform = Compose([RandomHorizontalFlip(), ToTensor(),
+                     Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)])
+
+
+# RandomCrop(32, padding=4) : 32x32 이미지를 40x40으로 만들고 32x32만큼 Crop한다.
+# Resize(antialias=True) : 
+# ToTensor() : [0, 255]에서 [0.0, 1.0]으로 스케일링하여 텐서를 리턴한다
+# PILToTensor() : PIL(H,W,C)를 Tensor(C, H, W)로 바꿈

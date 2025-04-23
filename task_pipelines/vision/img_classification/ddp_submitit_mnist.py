@@ -19,6 +19,11 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 
+import submitit  # Submitit 라이브러리
+
+# ------------------------------------------------------------------------
+# 1) Model & Utilities
+# ------------------------------------------------------------------------
 class SimpleCNN(nn.Module):
     def __init__(self):
         super().__init__()
@@ -28,6 +33,7 @@ class SimpleCNN(nn.Module):
         self.dropout2 = nn.Dropout2d(0.25)
         self.fc1 = nn.Linear(50176, 128)
         self.fc2 = nn.Linear(128, 10)
+
     def forward(self, x):
         x = torch.relu(self.conv1(x))
         x = torch.relu(self.conv2(x))
@@ -38,13 +44,14 @@ class SimpleCNN(nn.Module):
         x = self.fc2(x)
         return x
 
+
 def set_torch_backends_ampare():
     """
-    Ampare architecture : 30xx, a100, h100,..
+    Ampare architecture : 30xx, A100, H100, ...
+    TensorFloat-32를 허용해 연산속도를 높임.
     """
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-
 
 
 def fix_random_seeds(seed=31):
@@ -57,6 +64,9 @@ def fix_random_seeds(seed=31):
 
 
 def setup_for_distributed(is_master):
+    """
+    rank=0 프로세스가 아닌 경우 print를 무시하기 위한 헬퍼
+    """
     import builtins as __builtin__
     builtin_print = __builtin__.print
 
@@ -67,37 +77,40 @@ def setup_for_distributed(is_master):
 
     __builtin__.print = print
 
+
 def resolve_root_node_address(nodes: str) -> str:
-    """The node selection format in SLURM supports several formats.
-
-    This function selects the first host name from
-
-    - a space-separated list of host names, e.g., 'host0 host1 host3' yields 'host0' as the root
-    - a comma-separated list of host names, e.g., 'host0,host1,host3' yields 'host0' as the root
-    - the range notation with brackets, e.g., 'host[5-9]' yields 'host5' as the root
-
+    """
+    SLURM_NODELIST에서 첫 번째 노드 이름을 파싱해 오는 함수.
+    예:
+      'host0 host1 host3' -> 'host0'
+      'host0,host1,host3' -> 'host0'
+      'host[5-9]' -> 'host5'
     """
     nodes = re.sub(r"\[(.*?)[,-].*\]", "\\1", nodes)  # Take the first node of every node range
-    nodes = re.sub(r"\[(.*?)\]", "\\1", nodes)  # handle special case where node range is single number
+    nodes = re.sub(r"\[(.*?)\]", "\\1", nodes)        # handle special case where node range is single number
     return nodes.split(" ")[0].split(",")[0]
 
+
 def get_main_address():
+    """
+    MASTER_ADDR를 설정(혹은 가져오기)하는 함수
+    """
     root_node = os.environ.get("MASTER_ADDR")
     if root_node is None:
         nodelist = os.environ.get("SLURM_NODELIST", "127.0.0.1")
         root_node = resolve_root_node_address(nodelist)
         os.environ["MASTER_ADDR"] = root_node
-
     return root_node
+
 
 def init_distributed_mode(args):
     """
-    from DoRA
+    기존 코드의 분산 초기화 로직.
     """
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        args.rank = int(os.environ["RANK"]) # dist.get_rank()
-        args.world_size = int(os.environ['WORLD_SIZE']) # dist.get_world_size()
-        args.local_rank = int(os.environ['LOCAL_RANK']) # args.rank % torch.cuda.device_count()
+        args.rank = int(os.environ["RANK"])
+        args.world_size = int(os.environ['WORLD_SIZE'])
+        args.local_rank = int(os.environ['LOCAL_RANK'])
     elif 'SLURM_PROCID' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
         args.world_size = int(os.environ['SLURM_NTASKS'])
@@ -112,16 +125,16 @@ def init_distributed_mode(args):
         args.rank, args.local_rank, args.world_size = 0, 0, 1
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '29500'
-        is_master = True
     else:
         print('Not using distributed mode')
         sys.exit(1)
 
     os.environ['MASTER_ADDR'] = get_main_address()
-    os.environ['MASTER_PORT'] = '29500'
+    if 'MASTER_PORT' not in os.environ:
+        os.environ['MASTER_PORT'] = '29500'
 
     dist.init_process_group(
-        backend='nccl', 
+        backend='nccl',
         init_method='env://',
         world_size=args.world_size,
         rank=args.rank,
@@ -130,45 +143,33 @@ def init_distributed_mode(args):
     torch.cuda.set_device(args.local_rank)
     args.device = torch.device('cuda', args.local_rank)
 
-    is_master = args.rank == 0
+    is_master = (args.rank == 0)
     dist.barrier()
 
-    setup_for_distributed(args.rank == 0)
+    setup_for_distributed(is_master)
     print('| distributed init (rank {}): {}'.format(args.rank, os.environ['MASTER_ADDR']), flush=True)
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--precision", type=str, default="fp32")
-    parser.add_argument("--seed", type=int, default=31)
-    parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--ckpt_dir", type=str, default="checkpoints")
-    parser.add_argument("--ckpt_filename", type=str, default="checkpoint.pth")
-    parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--wandb_project", type=str, default="mnist_cnn_pytorch")
-    parser.add_argument("--wandb_entity", type=str, default="ty-kim")
-    parser.add_argument("--wandb_key", type=str)
-    args = parser.parse_args()
 
-    # ============================ Distributed Setting ============================
+# ------------------------------------------------------------------------
+# 2) Training Logic as a Function
+# ------------------------------------------------------------------------
+def train_main(args):
+    # 1) 분산 초기화
     init_distributed_mode(args)
 
-    # ============================ Basic Setting ==================================
-    if args.wandb and args.rank == 0:
+    # 2) 기타 설정
+    if args.rank == 0 and args.wandb:
         wandb.login(key=args.wandb_key, force=True)
         wandb.init(project=args.wandb_project, entity=args.wandb_entity)
 
-    # 전 rank가 완전히 동일한 시드(예: seed=42)를 써도, DistributedSampler에서 랜덤하게 데이터를 분배하기 때문에 문제 없음
-    # 모두 동일한 랜덤 시퀀스로 augmentation이 적용될 가능성이 생기는 등 원치않는 효과 방지
-    fix_random_seeds(args.seed+args.rank)
-    # ============================ Dataset =========================================
-    assert args.batch_size % args.world_size == 0, '--batch-size must be multiple of CUDA device count'
+    fix_random_seeds(args.seed + args.rank)
+    set_torch_backends_ampare()
 
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.1307),(0.3081))]
-    )
+    # 3) Dataset 준비
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
 
     if dist.get_rank() != 0:
         dist.barrier()
@@ -180,42 +181,44 @@ if __name__ == "__main__":
     if dist.get_rank() == 0:
         dist.barrier()
 
-
+    # DistributedSampler
     if args.world_size > 1:
-        # DistributedSampler의 디폴트 shuffle는 True임
-        train_sampler = DistributedSampler(
-            train_dataset, 
-            rank=args.rank, 
-            num_replicas=args.world_size, 
-            shuffle=True
-        )
-        test_sampler = DistributedSampler(
-            test_dataset, 
-            rank=args.rank, 
-            num_replicas=args.world_size, 
-            shuffle=False
-            )
+        train_sampler = DistributedSampler(train_dataset, rank=args.rank, num_replicas=args.world_size, shuffle=True)
+        test_sampler = DistributedSampler(test_dataset, rank=args.rank, num_replicas=args.world_size, shuffle=False)
     else:
         train_sampler, test_sampler = None, None
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler, 
-                              num_workers=4, pin_memory=True, shuffle=(train_sampler is None))
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler, 
-                             num_workers=4, pin_memory=True, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        sampler=train_sampler,
+        num_workers=4,
+        pin_memory=True,
+        shuffle=(train_sampler is None)
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        sampler=test_sampler,
+        num_workers=4,
+        pin_memory=True,
+        shuffle=False
+    )
 
-    # ============================ Models =========================================
+    # 4) Model
     model = SimpleCNN().cuda()
     model = nn.parallel.DistributedDataParallel(
         model,
         device_ids=[args.local_rank],
-        output_device=args.local_rank,  # this ensures that tensors are sent to the GPU
+        output_device=args.local_rank,
     )
 
-    # ============================ Traning setup ======================================
+    # 5) Optimizer, Scheduler
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=1)
 
+    # 6) Precision / AMP
     if args.precision == "fp16":
         ptdtype = torch.float16
     elif args.precision == "bf16":
@@ -227,27 +230,22 @@ if __name__ == "__main__":
         autocast_ctx = torch.amp.autocast(device_type='cuda', dtype=ptdtype)
     else:
         autocast_ctx = torch.autocast(device_type='cpu', dtype=ptdtype)
-    
-    # Underfitting을 방지
-    scaler = torch.cuda.amp.GradScaler(enabled=(ptdtype == 'float16'))
 
-    # ============================ Resume setup ========================================
+    scaler = torch.cuda.amp.GradScaler(enabled=(ptdtype == torch.float16))
+
+    # 7) (Optional) Resume
     start_epoch = 0
     if args.resume:
         ckpt_filepath = os.path.join(args.ckpt_dir, args.ckpt_filename)
-        # 체크포인트에서 텐서와 메타데이터 가져옴
-        # 텐서안에 storage라는 오브젝트가 있는데 이것의 위치를 장치로 옮겨줌
         map_location = lambda storage, loc: storage.cuda(args.local_rank)
-        checkpoint = torch.load(ckpt_filepath, map_location=map_location) # = torch.load(ckpt_filepath, map_location=device)
+        checkpoint = torch.load(ckpt_filepath, map_location=map_location)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-
         print(f"Resuming from epoch {start_epoch}", flush=True)
 
-
-    # ============================ Train ==============================================
+    # 8) Training Loop
     train_acc_metric = MulticlassAccuracy(num_classes=10).to(args.local_rank)
     val_acc_metric = MulticlassAccuracy(num_classes=10).to(args.local_rank)
 
@@ -256,64 +254,61 @@ if __name__ == "__main__":
     init_start_event.record()
 
     for epoch in range(start_epoch, args.epochs):
+        # --- Train ---
         model.train()
         if train_sampler:
             train_sampler.set_epoch(epoch)
 
         train_acc_metric.reset()
 
-
+        # rank=0에서만 tqdm 표시
         if args.rank == 0:
-            train_loader = tqdm(train_loader, desc = f'Epoch {epoch}', leave=False)
-        for batch_idx, (data, target) in enumerate(train_loader):
-            data = data.to('cuda', pin_memory=True, non_blocking=True)
-            target = target.to('cuda', pin_memory=True, non_blocking=True)
-            optimizer.zero_grad(set_to_none=True) # for param in model.parameters(): param.grad = None
+            loader_iter = tqdm(train_loader, desc=f"Epoch {epoch}", leave=False)
+        else:
+            loader_iter = train_loader
+
+        for batch_idx, (data, target) in enumerate(loader_iter):
+            data = data.to('cuda', non_blocking=True)
+            target = target.to('cuda', non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
 
             with autocast_ctx:
                 output = model(data)
                 loss = criterion(output, target)
 
-            scaler.scale(loss).backward() # if scaler is None, this is equivalent to loss.backward()
-            scaler.step(optimizer) # if scaler is None, this is equivalent to optimizer.step()
-            scaler.update() # if scaler is None, this is equivalent to None
-
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             train_acc_metric.update(output, target)
 
             if (batch_idx % 100 == 0) and (args.rank == 0) and args.wandb:
                 wandb.log({"loss": loss.item()})
                 images = wandb.Image(data[0].detach().cpu(), caption=f"Label: {target[0].item()}")
-                wandb.log({'examples' : images})
+                wandb.log({'examples': images})
 
-            if args.local_rank == 0:
-                train_loader.set_description(f'loss: {loss.item():.4f}')
-
+            if args.rank == 0:
+                loader_iter.set_description(f"loss: {loss.item():.4f}")
 
         scheduler.step()
-        # 에포크 끝나고, 전체 training accuracy 계산
+
         train_acc = train_acc_metric.compute()
 
-        # test
+        # --- Validation ---
         model.eval()
         val_acc_metric.reset()
+
         if args.rank == 0:
-            pbar = tqdm(test_loader, colour='green', desc=f'Validation Epoch {epoch}')
-        else:
-            pbar = test_loader
-
+            pbar = tqdm(range(len(test_loader)), colour='green', desc='Validation Epoch')
         with torch.no_grad():
-            for data, target in pbar:
-                data = data.to('cuda', pin_memory=True, non_blocking=True)
-                target = target.to('cuda', pin_memory=True, non_blocking=True)
-
-                
+            for data, target in test_loader:
+                data = data.to('cuda', non_blocking=True)
+                target = target.to('cuda', non_blocking=True)
                 with autocast_ctx:
                     output = model(data)
                     val_loss = criterion(output, target)
-                
-                val_acc_metric.update(output, target)
 
+                val_acc_metric.update(output, target)
 
                 if args.rank == 0:
                     pbar.update(1)
@@ -323,24 +318,73 @@ if __name__ == "__main__":
 
         val_acc = val_acc_metric.compute()
 
-        # save checkpoint
+        # --- Save Checkpoint (rank=0 only) ---
         if args.rank == 0:
             print(f"[Epoch {epoch}] Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
             checkpoint = {
                 'epoch': epoch,
-                'model_state_dict': model.module.state_dict(), # 이렇게 해야 나중에 싱글 추론 가능
+                'model_state_dict': model.module.state_dict(),  # for single-GPU inference later
                 'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict' : scheduler.state_dict()
+                'scheduler_state_dict': scheduler.state_dict()
             }
-            torch.save(checkpoint, os.path.join(args.ckpt_dir, f'checkpoint_{epoch}.pth'))
+            torch.save(checkpoint, f'checkpoint_{epoch}.pth')
 
-
-    
-    # ============================ Finish ==============================================
+    # 9) Finish
     dist.barrier()
     init_end_event.record()
+
     if args.wandb and args.rank == 0:
         wandb.finish()
+
     if args.rank == 0:
-        print(f"CUDA event elapsed time: {init_start_event.elapsed_time(init_end_event) / 1000}sec")
+        elapsed_time = init_start_event.elapsed_time(init_end_event) / 1000
+        print(f"Training done! Elapsed time: {elapsed_time:.2f} sec")
+
     dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    """
+    python train_submitit.py --wandb --wandb_key=<your_key> --epochs=5
+    이렇게 하면 슬럼이 아닌 로컬에서도 동작함
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    parser.add_argument("--seed", type=int, default=31)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--ckpt_dir", type=str, default="checkpoints")
+    parser.add_argument("--ckpt_filename", type=str, default="checkpoint.pth")
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb_project", type=str, default="mnist_cnn_pytorch")
+    parser.add_argument("--wandb_entity", type=str, default="ty-kim")
+    parser.add_argument("--wandb_key", type=str, default="")
+    parser.add_argument("--local_rank", type=int, default=0, help="Used internally for distributed mode")
+
+    args = parser.parse_args()
+
+
+    # 1) Submitit AutoExecutor
+    executor = submitit.AutoExecutor(
+        folder="submitit_logs_mnist",
+        slurm_max_num_timeout=20
+    )
+
+    # 2) Executor 파라미터 설정
+    executor.update_parameters(
+        name="mnist_submitit_job",
+        timeout_min=60,        # 1시간
+        slurm_partition="gpu", # 실제 Slurm 파티션
+        gpus_per_node=1,       # 노드당 GPU 개수
+        tasks_per_node=1,      # 일반적으로 dist. training 시 node당 1개의 Python 프로세스
+        cpus_per_task=4,       # CPU 쓰레드 (데이터 로드 등)
+    )
+
+    # 3) 잡 제출 -> train_main(args) 호출
+    job = executor.submit(train_main, args)
+
+
+    # 4) 결과 기다리기
+    _ = job.result()  # 여기서는 train_main이 None 리턴
