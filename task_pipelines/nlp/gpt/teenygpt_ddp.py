@@ -326,8 +326,21 @@ class teenyGPT(nn.Module):
 
         return self.loss_fun(log_prob[:,:-1].contiguous(), x[:,1:].contiguous(), reduction=reduction)
     
+
+def evaluation()
     
 if __name__ == '__main__':
+
+    num_tokens = 150 # do not modify!
+    num_token_vals = 29  # do not modify!
+    num_neurons = 512
+    num_heads = 8
+    num_blocks = 4
+    num_emb = num_heads * 4
+    causal=True # do not modify!    
+    lr = 1e-3 # learning rate; do not modify!
+    num_epochs = 1000 # max. number of epochs; do not modify!
+    max_patience = 5 # an early stopping is used, if training doesn't improve for longer than 20 epochs, it is stopped; do not modify!
 
     dataset = load_dataset("IlyaGusev/headline_cause", "en_simple")
 
@@ -340,3 +353,39 @@ if __name__ == '__main__':
     train_dataset = Headers(dataprocessor, tokenizer, num_training_data=num_training_data, mode="train")
     validation_dataset = Headers(dataprocessor, tokenizer, mode="val")
     test_dataset = Headers(dataprocessor, tokenizer, mode="test")
+
+
+    train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=4, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=4, shuffle=False)
+
+
+    model = teenyGPT(num_tokens=num_tokens, num_token_vals=num_token_vals, num_emb=num_emb, num_neurons=num_neurons, num_heads=num_heads, num_blocks=num_blocks, device=device)
+    model = model.to(device)
+    # Print the summary (like in Keras)
+    print(summary(model, torch.zeros(1, num_tokens, dtype=torch.long).to(device), show_input=False, show_hierarchical=False))
+
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad == True], lr=lr)
+    
+    # Training
+
+    nll_val = []
+    rec_val = []
+    best_nll = 1000
+    patience = 0
+    model_best = None
+
+    for e in range(num_epochs):
+        model.train()
+        for idx, batch in enumerate(train_dataloader):
+            loss = model.forward(batch.to(device))
+
+            optimizer.zero_grad()
+            loss.backward(retain_graph=True)
+            optimizer.step()
+
+        # Validation
+        loss_val, r_val = evaluation(val_loader, model_best=model, epoch=e, device=device)
+        nll_val.append(loss_val)  # save for plotting
+        rec_val.append(r_val)
+

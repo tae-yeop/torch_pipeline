@@ -25,3 +25,27 @@ apt-get install google-chrome-stable
 ```python    
 pip install selenium webdriver_manager
 ```
+
+---
+# 통신
+
+GET method
+데이터를 url에 포함 (&로 구분)
+
+POST
+데이터를 숨겨서 전송 (url 변화 x)
+
+웹서버의 다양성
+- 웹서버 마다 데이터를 요청하는 방식 다름
+    - get/post 메소드
+    - Headers
+    - Parameters
+
+- 웹서버마다 데이터를 반환하는 방식 다름
+    - 여러 번에 걸쳐 데이터를 반환
+    - 반환하는 데이터의 포맷이 다름 (XML, HTML)
+    - 파이썬 dict 형태, 문자열인 JSON반환
+
+Requests : 웹서버와 HTTP 요청 처리
+Beautiful Soup :
+HTML Tag를 파싱하는 라이브러리, CSS Selector로 원하는 데이터 선택
