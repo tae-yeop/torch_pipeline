@@ -60,8 +60,30 @@ class ImageDataset(Dataset):
     def __init__(self, root, transforms=None):
         super().__init__()
         self.root = root
-        self.file_list = [os.path.join(self.root, file_path) for file_path in os.listdir(self.root)]
+        # self.file_list = [os.path.join(self.root, file_path) for file_path in os.listdir(self.root)]
+        self.load_file_list_one_step()
         self.transformsn = transforms
+
+    def load_file_list_one_step(self):
+        """
+        root 아래 바로 파일이 있는 경우
+        """
+        self.file_list = [os.path.join(self.root, file_path) for file_path in os.listdir(self.root)]
+
+
+    def load_file_list(self,):
+        if self.root.endswith('/'):
+            self.root = self.root[:-1]
+        
+        # 디렉토리가 아니라 바로 파일이면
+        if os.path.isfile(self.root):
+            self.file_list = [self.root] if self.root.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif')) else []
+
+        else:
+            supported_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif')
+            # self.file_list = sorted(glob.glob(os.path.join(self.root, '*')))
+            self.file_list = sorted([file for file in glob.glob(os.path.join(self.root, '*')) if file.lower().endswith(supported_extensions)])
+
 
     def __len__(self):
         return len(self.file_list)

@@ -15,6 +15,7 @@ import sys
 import os
 import re
 import wandb
+import random
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -38,7 +39,7 @@ class SimpleCNN(nn.Module):
         x = self.fc2(x)
         return x
 
-def set_torch_backends_ampare():
+def set_torch_backends_ampere():
     """
     Ampare architecture : 30xx, a100, h100,..
     """
@@ -47,13 +48,17 @@ def set_torch_backends_ampare():
 
 
 
-def fix_random_seeds(seed=31):
+def fix_random_seed(seed=31):
     """
     Fix random seeds.
     """
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
     np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def setup_for_distributed(is_master):
@@ -94,10 +99,16 @@ def init_distributed_mode(args):
     """
     from DoRA
     """
+    # 실행시 torchrun or torch.distributed.launch --
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"]) # dist.get_rank()
         args.world_size = int(os.environ['WORLD_SIZE']) # dist.get_world_size()
         args.local_rank = int(os.environ['LOCAL_RANK']) # args.rank % torch.cuda.device_count()
+    # 스크립트 실행시
+    # #SBATCH --gres=gpu:x
+    # #SBATCH --ntasks-per-node=x
+    # python train.py
+    # python train.py를 x번 돌리는 경우
     elif 'SLURM_PROCID' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
         args.world_size = int(os.environ['SLURM_NTASKS'])
@@ -106,13 +117,15 @@ def init_distributed_mode(args):
 
         os.environ['WORLD_SIZE'] = str(args.world_size)
         os.environ['RANK'] = str(args.rank)
-
+    # 스크립트 실행시 : 슬럼 옵션 사용하지 않을시
+    # 이때는 torchrun or torch.distributed.launch도 안쓴다고 가정
     elif torch.cuda.is_available():
         print('Will run the code on one GPU.')
         args.rank, args.local_rank, args.world_size = 0, 0, 1
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '29500'
         is_master = True
+    # GPU 마저도 안쓰는 경우 그냥 종료
     else:
         print('Not using distributed mode')
         sys.exit(1)
@@ -162,7 +175,7 @@ if __name__ == "__main__":
 
     # 전 rank가 완전히 동일한 시드(예: seed=42)를 써도, DistributedSampler에서 랜덤하게 데이터를 분배하기 때문에 문제 없음
     # 모두 동일한 랜덤 시퀀스로 augmentation이 적용될 가능성이 생기는 등 원치않는 효과 방지
-    fix_random_seeds(args.seed+args.rank)
+    fix_random_seed(args.seed+args.rank)
     # ============================ Dataset =========================================
     assert args.batch_size % args.world_size == 0, '--batch-size must be multiple of CUDA device count'
 
