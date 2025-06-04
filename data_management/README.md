@@ -1,3 +1,64 @@
+## 대용량 데이터셋 다루기
+
+### 리눅스 조회
+
+ls할 때 일부만 얻는다
+```
+cd /purestorage/datasets/face_recognition/balanced_cfsc_3/m.0fr23bz
+ls -U | head -4
+```
+
+```
+# 파일 타입에 대해서 검색
+find ./ -type f -iname "*.jpg" | head -n 20
+```
+
+
+### 대용량 압축풀기
+```
+ptar -xvf archive.tgz
+
+# 병렬 압축해제 : pigz (병렬 gzip) 또는 pbzip2 (병렬 bzip2)와 같은 도구를 사용하여 압축 해제 과정을 병렬화
+tar -I pigz -xvf yourfile.tar.gz # pigz 사용
+
+tar --use-compress-program=pbzip2 -xvf yourfile.tar.bz2 # pbzip2
+```
+
+
+병렬 처리 방법
+```
+unzip -l test.zip | tail -n +4 | head -n -2 | awk '{print $4}' | parallel -j 4 test.zip {}
+```
+
+
+gz 압축풀기 :  먼저 하나로 합쳐야한
+```
+cat source.tar.gz* > source_combined.tar.gz
+```
+
+### annotation label npy 파일
+
+
+```
+# /purestorage/datasets/face_recognition
+# data = np.load("/purestorage/datasets/face_recognition/webface42m_data_list.pickle",  allow_pickle=True)
+
+data = np.load('/purestorage/datasets/face_recognition/CFSC_W42M/self.data_list_official_w42m.npy', allow_pickle=True)
+print(len(data))
+print(data[0])
+
+```
+
+
+### 데이터 전송
+
+```
+rsync -avh --include='*/' --include='*.tar.gz' --exclude='*' /home/tyk/exp4/ tyk@160:/purestorage/datasets/face_recognition/FP_SYN1/
+
+```
+
+
+
 데이터를 어떻게 활용해야하나
 파일을 일일이 하나씩 읽으면 너무 느리다
 

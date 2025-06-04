@@ -11,6 +11,8 @@ temp
 checkpoints
 data
 runs
+*.jpg
+*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
